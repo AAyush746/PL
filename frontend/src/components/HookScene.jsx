@@ -190,15 +190,13 @@ export default function HookScene() {
     };
 
     const applyDOM = () => {
-      const visible = s.phase !== 'top' && s.phase !== 'flyoff';
       if (chainRef.current) {
-        // chain always reaches from the hidden origin above the box down to the hook
-        chainRef.current.style.height = `${s.y + HIDE}px`;
-        chainRef.current.style.opacity = visible ? '1' : '0';
+        chainRef.current.style.height = `${Math.max(0, s.y)}px`;
+        chainRef.current.style.opacity = s.phase === 'top' || s.phase === 'flyoff' ? '0' : '1';
       }
       if (hookRef.current) {
         hookRef.current.style.transform = `translate(-50%, ${s.y}px)`;
-        hookRef.current.style.opacity = visible ? '1' : '0';
+        hookRef.current.style.opacity = s.phase === 'top' || s.phase === 'flyoff' ? '0' : '1';
       }
       if (s.phase === 'reel' || s.phase === 'catch') {
         const tipY = s.y + TIP;
@@ -404,16 +402,15 @@ export default function HookScene() {
         </div>
       ))}
 
-      {/* ── the hook chain (from the hidden origin above down to the hook) ── */}
+      {/* ── the hook chain ─────────────────────────────────────────── */}
       <div
         ref={chainRef}
-        className="absolute left-1/2 w-6"
+        className="absolute left-1/2 top-0 w-6"
         style={{
-          top: `${-HIDE}px`,
           translate: 'calc(-50% - 14px) 0',
           height: '0px',
           opacity: '0',
-          transition: 'opacity 0.2s ease',
+          transition: 'opacity 0.3s ease',
           backgroundImage: CHAIN,
           backgroundRepeat: 'repeat-y',
           backgroundSize: '24px 42px',
@@ -426,7 +423,7 @@ export default function HookScene() {
       <div
         ref={hookRef}
         className="absolute left-1/2 top-0"
-        style={{ transform: 'translate(-50%, -150px)', opacity: '0', transition: 'opacity 0.2s ease' }}
+        style={{ transform: 'translate(-50%, -150px)', opacity: '0', transition: 'opacity 0.3s ease' }}
       >
         <svg
           width="52"
