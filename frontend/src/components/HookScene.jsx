@@ -48,8 +48,6 @@ const SPLASH_OUT = [
   { dx: 6, dy: -18 },
   { dx: 30, dy: -24 },
 ];
-const RIPPLE_IN_DELAYS = [0, 0.12, 0.24];
-const RIPPLE_OUT_DELAYS = [0, 0.12];
 
 const CHAIN = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='42' viewBox='0 0 24 42'><defs><linearGradient id='m' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23fde68a'/><stop offset='0.35' stop-color='%23f97316'/><stop offset='0.8' stop-color='%239a3412'/><stop offset='1' stop-color='%23431407'/></linearGradient></defs><rect x='3' y='1' width='14' height='22' rx='7' fill='url(%23m)'/><rect x='6.5' y='4.5' width='7' height='15' rx='3.5' fill='%230a0a0c'/><rect x='10' y='21' width='14' height='22' rx='7' fill='url(%23m)'/><rect x='13.5' y='24.5' width='7' height='15' rx='3.5' fill='%230a0a0c'/></svg>")`;
 const BUBBLES = [
@@ -61,21 +59,26 @@ const BUBBLES = [
 
 /* ── physics (px, px/s, px/s²) ──────────────────────────────────────────── */
 const TIP = 86; // hook svg top → the catch point at the barb
-// Quadratic drag (drag ∝ v²): free-fall in air, then a sharp jolt on entry
-// and a slow, drag-limited creep down to the middle of the water.
+// Linear drag (a = k·(v_terminal − v)): a calm free-fall through the air that
+// decelerates gently the instant it touches the water and then creeps down
+// to the middle of the pond.
 const G = 2600; // gravity
-const AIR_TERMINAL = 1500; // max free-fall speed
-const WATER_TERMINAL = 100; // slow terminal sink speed in water
-const WATER_DRAG = G / (WATER_TERMINAL * WATER_TERMINAL); // c in a = g - c·v²
-const WINCH = 500; // winch accel when reeling
-const WATER_RISE_TERMINAL = 130; // slow terminal rise speed in water
-const WATER_RISE_DRAG = WINCH / (WATER_RISE_TERMINAL * WATER_RISE_TERMINAL); // c in a = -W - c·v²
+const AIR_TERMINAL = 170; // max free-fall speed (kept low so the entry is soft)
+const WATER_TERMINAL = 70; // slow terminal sink speed in water
+const WATER_DRAG = 2.6; // 1/s — how quickly the water brakes the hook
+const WATER_RISE_TERMINAL = 90; // slow terminal rise speed in water
+const WATER_RISE_DRAG = 2.0; // 1/s — how quickly the water brakes the reel
 const AIR_RISE_ACCEL = 2600; // quick accel back up through the air
-const AIR_RISE_TERMINAL = 1600;
-const DEPTH_RATIO = 0.6; // how far below the surface the tip sinks (0.6 = mid-water)
+const AIR_RISE_TERMINAL = 1500;
+const DEPTH_RATIO = 0.58; // how far below the surface the tip sinks (0.58 = middle of water)
 const AIR_IDLE = 0.7; // pause at the surface before diving
 const CATCH_HOLD = 0.55; // hold at depth while every element latches on
 const FLYOFF_HOLD = 0.6; // hold at top while the haul flies off
+
+// sequential ripple rings spawned on entry / exit (one after another)
+const RING_IN_DELAYS = [0, 0.55, 1.1];
+const RING_OUT_DELAYS = [0, 0.5];
+const RING_LIFETIME = 1900; // ms a ring stays on screen
 
 function Ripple({ anim, delay, dur, stroke }) {
   return (
@@ -103,7 +106,7 @@ export default function HookScene() {
   const chainRef = useRef(null);
   const hookRef = useRef(null);
   const floaterRefs = useRef([]);
-  const [fx, setFx] = useState(null);
+  const [rings, setRings] = useState([]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -113,7 +116,8 @@ export default function HookScene() {
     const s = { y: 0, v: 0, phase: 'top', t: 0, under: false };
     let raf = 0;
     let last = performance.now();
-    let fxTimer = 0;
+    let ringSeq = 0;
+    const ringTimers = [];
 
     const ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect;
@@ -124,10 +128,20 @@ export default function HookScene() {
     });
     if (boxRef.current) ro.observe(boxRef.current);
 
-    const fireFx = (kind) => {
-      setFx({ kind, id: Date.now() });
-      clearTimeout(fxTimer);
-      fxTimer = setTimeout(() => setFx(null), 1400);
+    // spawn the surface ripples one after another, each fading on its own
+    const spawnRings = (kind) => {
+      const delays = kind === 'in' ? RING_IN_DELAYS : RING_OUT_DELAYS;
+      delays.forEach((delay, wave) => {
+        const id = ++ringSeq;
+        ringTimers.push(
+          setTimeout(() => {
+            setRings((r) => [...r, { kind, id, wave }]);
+            ringTimers.push(
+              setTimeout(() => setRings((r) => r.filter((x) => x.id !== id)), RING_LIFETIME),
+            );
+          }, delay * 1000),
+        );
+      });
     };
 
     const snapFloaters = () => {
@@ -193,8 +207,8 @@ export default function HookScene() {
       const tip = s.y + TIP;
       const under = tip >= m.waterY;
 
-      if (under && !s.under) fireFx('in');
-      else if (!under && s.under) fireFx('out');
+      if (under && !s.under) spawnRings('in');
+      else if (!under && s.under) spawnRings('out');
       s.under = under;
 
       switch (s.phase) {
@@ -212,10 +226,9 @@ export default function HookScene() {
             // free-fall in air: constant gravity, terminal velocity cap
             s.v = Math.min(AIR_TERMINAL, s.v + G * dt);
           } else {
-            // water drag (∝ v²): velocity slams toward a slow sink speed.
-            // clamping keeps the stiff equation stable frame-to-frame.
-            s.v += (G - WATER_DRAG * s.v * Math.abs(s.v)) * dt;
-            s.v = Math.max(WATER_TERMINAL, s.v);
+            // water drag (linear, gentle): a = k·(v_terminal − v) — the hook
+            // decelerates smoothly the moment it touches the surface
+            s.v += WATER_DRAG * (WATER_TERMINAL - s.v) * dt;
           }
           s.y += s.v * dt;
           if (tip >= m.maxDepth) {
@@ -237,9 +250,9 @@ export default function HookScene() {
 
         case 'reel':
           if (tip >= m.waterY) {
-            // slow, drag-limited rise through the water
-            s.v += (-WINCH - WATER_RISE_DRAG * s.v * Math.abs(s.v)) * dt;
-            if (s.v < -WATER_RISE_TERMINAL) s.v = -WATER_RISE_TERMINAL;
+            // slow, drag-limited rise through the water (linear drag toward
+            // the upward terminal speed)
+            s.v += WATER_RISE_DRAG * (-WATER_RISE_TERMINAL - s.v) * dt;
           } else {
             // quick acceleration back up through the air
             s.v = Math.max(-AIR_RISE_TERMINAL, s.v - AIR_RISE_ACCEL * dt);
@@ -271,7 +284,7 @@ export default function HookScene() {
     raf = requestAnimationFrame(step);
     return () => {
       cancelAnimationFrame(raf);
-      clearTimeout(fxTimer);
+      ringTimers.forEach((t) => clearTimeout(t));
       ro.disconnect();
     };
   }, []);
@@ -340,52 +353,47 @@ export default function HookScene() {
         <div className="h-full w-full bg-gradient-to-b from-cyan-500/10 to-cyan-900/15" />
       </div>
 
-      {/* ── entry / exit ripples + splash (physics-triggered) ──────── */}
-      {fx && (
-        <div key={fx.id} className="pointer-events-none absolute inset-0">
-          {fx.kind === 'in' ? (
-            <>
-              {RIPPLE_IN_DELAYS.map((delay) => (
-                <Ripple key={`in-${delay}`} anim="ripple3dIn" delay={delay} dur={1.1} stroke="rgba(165,243,252,0.85)" />
-              ))}
-              {SPLASH.map((d, i) => (
-                <div
-                  key={`in-drop-${i}`}
-                  className="absolute h-2 w-2 rounded-full bg-cyan-100 shadow-[0_0_8px_rgba(165,243,252,0.9)]"
-                  style={{
-                    left: '50%',
-                    top: `${WATER_TOP * 100}%`,
-                    '--dx': `${d.dx}px`,
-                    '--dy': `${d.dy}px`,
-                    translate: '-50% -50%',
-                    animation: `splashIn 1.1s ease-out ${i * 0.07}s both`,
-                  }}
-                />
-              ))}
-            </>
-          ) : (
-            <>
-              {RIPPLE_OUT_DELAYS.map((delay) => (
-                <Ripple key={`out-${delay}`} anim="ripple3dOut" delay={delay} dur={0.95} stroke="rgba(165,243,252,0.55)" />
-              ))}
-              {SPLASH_OUT.map((d, i) => (
-                <div
-                  key={`out-drop-${i}`}
-                  className="absolute h-1.5 w-1.5 rounded-full bg-cyan-200/80"
-                  style={{
-                    left: '50%',
-                    top: `${WATER_TOP * 100}%`,
-                    '--dx': `${d.dx}px`,
-                    '--dy': `${d.dy}px`,
-                    translate: '-50% -50%',
-                    animation: `splashOut 0.95s ease-out ${i * 0.05}s both`,
-                  }}
-                />
-              ))}
-            </>
-          )}
+      {/* ── entry / exit ripples + splash (physics-triggered, one after another) ── */}
+      {rings.map((ring) => (
+        <div key={ring.id} className="pointer-events-none absolute inset-0">
+          <Ripple
+            anim={ring.kind === 'in' ? 'rippleIn' : 'rippleOut'}
+            delay={0}
+            dur={ring.kind === 'in' ? 1.7 : 1.4}
+            stroke={ring.kind === 'in' ? 'rgba(165,243,252,0.85)' : 'rgba(165,243,252,0.55)'}
+          />
+          {ring.wave === 0 &&
+            (ring.kind === 'in'
+              ? SPLASH.map((d, i) => (
+                  <div
+                    key={`in-drop-${i}`}
+                    className="absolute h-1.5 w-1.5 rounded-full bg-cyan-100 shadow-[0_0_6px_rgba(165,243,252,0.8)]"
+                    style={{
+                      left: '50%',
+                      top: `${WATER_TOP * 100}%`,
+                      '--dx': `${d.dx}px`,
+                      '--dy': `${d.dy}px`,
+                      translate: '-50% -50%',
+                      animation: `splashIn 0.9s ease-out ${i * 0.09}s both`,
+                    }}
+                  />
+                ))
+              : SPLASH_OUT.map((d, i) => (
+                  <div
+                    key={`out-drop-${i}`}
+                    className="absolute h-1 w-1 rounded-full bg-cyan-200/80"
+                    style={{
+                      left: '50%',
+                      top: `${WATER_TOP * 100}%`,
+                      '--dx': `${d.dx}px`,
+                      '--dy': `${d.dy}px`,
+                      translate: '-50% -50%',
+                      animation: `splashOut 0.9s ease-out ${i * 0.08}s both`,
+                    }}
+                  />
+                )))}
         </div>
-      )}
+      ))}
 
       {/* ── the hook chain ─────────────────────────────────────────── */}
       <div
