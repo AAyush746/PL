@@ -1,0 +1,31 @@
+# ── Python / FastAPI backend ──────────────────────────────────────────────
+backend/venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# local data & secrets
+backend/*.db
+backend/*.db-journal
+backend/.env
+.env
+.env.*
+!.env.example
+
+# ── Node / Vite frontend ──────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+*.local
+npm-debug.log*
+
+# ── OS / editor ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json

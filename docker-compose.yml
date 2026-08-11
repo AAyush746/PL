@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: cybersafe
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      APP_DATABASE_URL: "postgresql+asyncpg://postgres:password@postgres:5432/cybersafe"
+      TRACKING_DATABASE_URL: "postgresql+asyncpg://postgres:password@postgres:5432/cybersafe"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+
+  celery_worker:
+    build:
+      context: ./backend
+    command: celery -A app.celery_app.celery_app worker --loglevel=info
+    environment:
+      APP_DATABASE_URL: "postgresql+asyncpg://postgres:password@postgres:5432/cybersafe"
+      TRACKING_DATABASE_URL: "postgresql+asyncpg://postgres:password@postgres:5432/cybersafe"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  pgdata:
