@@ -63,7 +63,7 @@ const TIP = 86; // hook svg top → the catch point at the barb
 // decelerates gently the instant it touches the water and then creeps down
 // to the middle of the pond.
 const G = 2600; // gravity
-const AIR_TERMINAL = 220; // max free-fall speed (kept low so the entry is soft)
+const AIR_TERMINAL = 170; // max free-fall speed (kept low so the entry is soft)
 const WATER_TERMINAL = 70; // slow terminal sink speed in water
 const WATER_DRAG = 2.6; // 1/s — how quickly the water brakes the hook
 const WATER_RISE_TERMINAL = 90; // slow terminal rise speed in water
@@ -71,8 +71,7 @@ const WATER_RISE_DRAG = 2.0; // 1/s — how quickly the water brakes the reel
 const AIR_RISE_ACCEL = 2600; // quick accel back up through the air
 const AIR_RISE_TERMINAL = 1500;
 const DEPTH_RATIO = 0.58; // how far below the surface the tip sinks (0.58 = middle of water)
-const HIDE = 150; // px above the box where the hook waits out of sight
-const AIR_IDLE = 0.7; // pause (hidden) at the top before diving
+const AIR_IDLE = 0.7; // pause at the surface before diving
 const CATCH_HOLD = 0.55; // hold at depth while every element latches on
 const FLYOFF_HOLD = 0.6; // hold at top while the haul flies off
 
@@ -114,7 +113,7 @@ export default function HookScene() {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
 
     const m = { h: 420, w: 560, waterY: 420 * WATER_TOP, maxDepth: 0 };
-    const s = { y: -HIDE, v: 0, phase: 'top', t: 0, under: false };
+    const s = { y: 0, v: 0, phase: 'top', t: 0, under: false };
     let raf = 0;
     let last = performance.now();
     let ringSeq = 0;
@@ -190,14 +189,8 @@ export default function HookScene() {
     };
 
     const applyDOM = () => {
-      if (chainRef.current) {
-        chainRef.current.style.height = `${Math.max(0, s.y)}px`;
-        chainRef.current.style.opacity = s.phase === 'top' || s.phase === 'flyoff' ? '0' : '1';
-      }
-      if (hookRef.current) {
-        hookRef.current.style.transform = `translate(-50%, ${s.y}px)`;
-        hookRef.current.style.opacity = s.phase === 'top' || s.phase === 'flyoff' ? '0' : '1';
-      }
+      if (chainRef.current) chainRef.current.style.height = `${s.y}px`;
+      if (hookRef.current) hookRef.current.style.transform = `translate(-50%, ${s.y}px)`;
       if (s.phase === 'reel' || s.phase === 'catch') {
         const tipY = s.y + TIP;
         floaterRefs.current.forEach((el, i) => {
@@ -265,8 +258,8 @@ export default function HookScene() {
             s.v = Math.max(-AIR_RISE_TERMINAL, s.v - AIR_RISE_ACCEL * dt);
           }
           s.y += s.v * dt;
-          if (s.y <= -HIDE) {
-            s.y = -HIDE;
+          if (s.y <= 0) {
+            s.y = 0;
             s.v = 0;
             s.phase = 'flyoff';
             s.t = 0;
@@ -409,8 +402,6 @@ export default function HookScene() {
         style={{
           translate: 'calc(-50% - 14px) 0',
           height: '0px',
-          opacity: '0',
-          transition: 'opacity 0.3s ease',
           backgroundImage: CHAIN,
           backgroundRepeat: 'repeat-y',
           backgroundSize: '24px 42px',
@@ -420,11 +411,7 @@ export default function HookScene() {
       />
 
       {/* ── the hook ───────────────────────────────────────────────── */}
-      <div
-        ref={hookRef}
-        className="absolute left-1/2 top-0"
-        style={{ transform: 'translate(-50%, -150px)', opacity: '0', transition: 'opacity 0.3s ease' }}
-      >
+      <div ref={hookRef} className="absolute left-1/2 top-0" style={{ transform: 'translate(-50%, 0px)' }}>
         <svg
           width="52"
           height="128"
