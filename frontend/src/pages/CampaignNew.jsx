@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Eye, Loader2, Sparkles } from 'lucide-react';
-import { getTemplates, getDepartments, getSendingProfiles, createCampaign } from '../lib/api';
+import { ArrowLeft, Check, Eye, Loader2, Rocket, Sparkles } from 'lucide-react';
+import { getTemplates, getDepartments, getSendingProfiles, createCampaign, launchCampaign } from '../lib/api';
 import { useAuth } from '../App';
 import { useAsync, Spinner, DifficultyDots, Modal, cn } from '../components/ui';
 
@@ -26,6 +26,7 @@ export default function CampaignNew() {
   const [schedule, setSchedule] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState('');
   const [previewId, setPreviewId] = useState(null);
 
   const applyPreset = (preset) => {
@@ -48,22 +49,35 @@ export default function CampaignNew() {
     });
   };
 
+  const buildPayload = () => {
+    if (!name.trim()) throw new Error('Give the campaign a name');
+    if (!templateId) throw new Error('Pick a phishing template');
+    return {
+      name: name.trim(),
+      template_id: templateId,
+      target_departments: departments,
+      scheduled_start: schedule || new Date().toISOString(),
+      ...(sendingProfileId ? { sending_profile_id: sendingProfileId } : {}),
+    };
+  };
+
   const submit = async (e) => {
     e.preventDefault();
+    await save(false);
+  };
+
+  const save = async (doLaunch) => {
     setError('');
     setSaving(true);
     try {
-      if (!name.trim()) throw new Error('Give the campaign a name');
-      if (!templateId) throw new Error('Pick a phishing template');
-      const payload = {
-        name: name.trim(),
-        template_id: templateId,
-        target_departments: departments,
-        scheduled_start: schedule || new Date().toISOString(),
-        ...(sendingProfileId ? { sending_profile_id: sendingProfileId } : {}),
-      };
-      const created = await createCampaign(token, payload);
-      navigate(`/campaigns/${created.id}`);
+      const created = await createCampaign(token, buildPayload());
+      if (doLaunch) {
+        const res = await launchCampaign(token, created.id);
+        setNotice(`Launched "${created.name}" — ${res.recipients} recipients. Emails are on their way.`);
+        navigate(`/campaigns/${created.id}`);
+      } else {
+        navigate(`/campaigns/${created.id}`);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -87,13 +101,23 @@ export default function CampaignNew() {
             <h1 className="font-display text-2xl font-bold text-slate-900">Create campaign</h1>
             <p className="mt-1 text-sm text-slate-600">Configure who receives the simulation and which template it uses.</p>
           </div>
-          <button type="submit" disabled={saving} className="btn-primary">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => save(true)}
+            className="btn-primary"
+          >
+            {saving ? <Loader2 className="animate-spin" size={16} /> : <Rocket size={16} />}
+            {saving ? 'Launching…' : 'Create & Launch'}
+          </button>
+          <button type="submit" disabled={saving} className="btn-ghost">
             {saving ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />}
             {saving ? 'Creating…' : 'Create campaign'}
           </button>
         </div>
 
         {error && <div className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+        {notice && <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{notice}</div>}
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="space-y-6 lg:col-span-2">

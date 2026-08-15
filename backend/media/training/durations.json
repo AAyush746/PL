@@ -1,0 +1,18 @@
+{
+  "phishing-basics": {
+    "en": 147.2,
+    "ne": 168.9
+  },
+  "credential-phishing": {
+    "en": 150.2,
+    "ne": 186.0
+  },
+  "malware-link": {
+    "en": 140.1,
+    "ne": 167.5
+  },
+  "urgency-bait": {
+    "en": 135.2,
+    "ne": 164.7
+  }
+}

@@ -7,16 +7,21 @@ import {
   Inbox,
   Send,
   LogOut,
+  ShieldAlert,
+  BookOpen,
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { cn } from './ui';
 import Logo from './Logo';
+import UserMenu from './UserMenu';
 
 const NAV = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/campaigns', label: 'Campaigns', icon: Crosshair },
   { to: '/templates', label: 'Templates', icon: FileText },
   { to: '/employees', label: 'Employees', icon: Users },
+  { to: '/remediation', label: 'Remediation', icon: ShieldAlert },
+  { to: '/training', label: 'Training', icon: BookOpen },
   { to: '/mailbox', label: 'Mailbox', icon: Inbox },
   { to: '/sending-profiles', label: 'Sending', icon: Send },
 ];
@@ -26,24 +31,38 @@ const TITLES = {
   '/campaigns': 'Simulation Campaigns',
   '/templates': 'Phishing Templates',
   '/employees': 'Employee Directory',
+  '/remediation': 'Remediation & Follow-up',
+  '/training': 'Training Library',
   '/mailbox': 'Simulated Mailbox',
   '/sending-profiles': 'Sending Profiles',
 };
 
 export default function Shell() {
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
   const location = useLocation();
+  const orgInitials = (user?.orgName || 'Phishloop')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0].toUpperCase())
+    .join('');
 
   return (
     <div className="flex min-h-screen">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-white/10 bg-[#0c0c0e] lg:flex">
         <div className="flex items-center gap-3 px-6 py-6">
-          <Logo size="md" />
+          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full">
+            <Logo size="md" className="absolute inset-0" />
+            <span
+              title={user?.orgName || 'Your organization'}
+              className="absolute inset-0 flex items-center justify-center rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-xs font-bold text-white ring-1 ring-white/10"
+            >
+              {orgInitials}
+            </span>
+          </div>
           <div>
             <p className="font-display text-base font-bold leading-tight text-white">Phishloop</p>
-            <p className="text-[11px] font-medium uppercase tracking-widest text-orange-400/80">
-              Human Risk Platform
-            </p>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-orange-400/80">Human Risk Platform</p>
           </div>
         </div>
 
@@ -106,10 +125,13 @@ export default function Shell() {
             {TITLES[location.pathname] || 'Phishloop'}
           </h2>
           <div className="flex items-center gap-3">
-            <span className="chip border border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              Platform online
+            <span className="hidden items-center gap-1.5 sm:flex">
+              <span className="chip border border-emerald-500/20 bg-emerald-500/10 text-emerald-300">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                Platform online
+              </span>
             </span>
+            <UserMenu />
           </div>
         </header>
 

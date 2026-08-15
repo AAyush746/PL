@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.utils import formataddr, format_datetime, make_msgid
 
+import dkim
+
 from aiosmtplib import SMTP
 from aiosmtplib.errors import SMTPException
 from sqlalchemy import select
@@ -33,7 +35,8 @@ from .core.security import decrypt_secret
 from .database import tenant_session
 from .models import (
     Campaign, CampaignResult, CampaignStatus, Employee, EventType,
-    Organization, OutboxMessage, PhishingEvent, PhishingTemplate, SendingProfile,
+    Organization, OutboxMessage, PhishingEvent, PhishingTemplate, Remediation,
+    RemediationStatus, SendingProfile,
 )
 from .risk_scoring import is_eligible_for_campaign
 
@@ -94,6 +97,31 @@ class EmailProvider:
             settings.SMTP_FROM_EMAIL or CAMPAIGN_FROM_EMAIL,
         )
 
+    # ── DKIM signing (profile overrides global env) ────────────────────────
+
+    def _dkim(self) -> tuple[str, str, str] | None:
+        """(selector, domain, private_key_pem) or None when signing is off.
+
+        A DKIM signature is the single biggest lever for landing in the
+        inbox instead of spam: it lets the receiver cryptographically verify
+        the message really came from the From domain. Without it, even
+        well-formed mail is treated as unauthenticated bulk."""
+        selector = domain = key = ""
+        if self.profile is not None:
+            selector = self.profile.dkim_selector or ""
+            domain = self.profile.dkim_domain or ""
+            key = (
+                decrypt_secret(self.profile.dkim_private_key_encrypted)
+                if self.profile.dkim_private_key_encrypted else ""
+            )
+        if not (selector and domain and key):
+            selector = settings.DKIM_SELECTOR
+            domain = settings.DKIM_DOMAIN
+            key = settings.DKIM_PRIVATE_KEY
+        if not (selector and domain and key):
+            return None
+        return selector.strip(), domain.strip().lower(), key.strip()
+
     # ── SMTP connection (created once, reused for the whole dispatch) ──────
 
     async def _smtp_client(self) -> SMTP:
@@ -108,19 +136,11 @@ class EmailProvider:
             timeout=settings.SMTP_TIMEOUT,
             use_tls=use_tls,
         )
+        # aiosmtplib auto-negotiates TLS: implicit TLS when use_tls=True
+        # (e.g. port 465), STARTTLS otherwise (e.g. port 587). We don't call
+        # starttls() ourselves — doing so after connect() raises
+        # "Connection already using TLS".
         await client.connect()
-        if not use_tls:
-            try:
-                await client.starttls()
-            except SMTPException as exc:
-                if username:
-                    raise  # never send credentials in the clear
-                logger.warning(
-                    "SMTP server %s:%s does not support STARTTLS (%s); continuing without TLS",
-                    host,
-                    port,
-                    exc,
-                )
         if username:
             await client.login(username, password or "")
         self._client = client
@@ -143,19 +163,99 @@ class EmailProvider:
         text = html_module.unescape(text)
         return re.sub(r"\s+", " ", text).strip()
 
-    async def _send_via_smtp(self, to_email: str, subject: str, html_body: str, from_name: str, from_email: str) -> None:
+    def _build_message(
+        self,
+        to_email: str,
+        subject: str,
+        html_body: str,
+        from_name: str,
+        from_email: str,
+        tracking_token: str | None = None,
+    ) -> EmailMessage:
+        """Assemble a well-formed, authentication-friendly message.
+
+        Beyond the required From/To/Subject, we add the headers that keep the
+        message out of the spam folder and satisfy the Gmail/Yahoo 2024 bulk
+        sender rules: a stable Message-ID, MIME-Version, and a working
+        one-click List-Unsubscribe (the campaign's "Report phishing" action
+        doubles as the unsubscribe target)."""
         message = EmailMessage()
         message["From"] = formataddr((from_name, from_email))
         message["To"] = to_email
         message["Subject"] = subject
         message["Message-ID"] = make_msgid(domain=from_email.rsplit("@", 1)[-1])
         message["Date"] = format_datetime(datetime.now(timezone.utc))
+        message["MIME-Version"] = "1.0"
+        if tracking_token is not None:
+            unsub_url = f"{settings.API_BASE_URL}/track/report/{tracking_token}"
+            message["List-Unsubscribe"] = f"<{unsub_url}>"
+            message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
         message.set_content(self._plain_text(html_body))
         message.add_alternative(html_body, subtype="html")
-        client = await self._smtp_client()
-        await client.send_message(message)
+        return message
+
+    def _sign_dkim(self, message: EmailMessage, selector: str, domain: str, private_key: str) -> bytes:
+        """Return the full message bytes with a DKIM-Signature prepended.
+
+        We serialize once, sign over the canonicalized headers/body, then
+        prepend the signature and ship the exact bytes via SMTP so the
+        receiver's verification matches byte-for-byte."""
+        raw = message.as_bytes()
+        sig = dkim.sign(
+            message=raw,
+            selector=selector.encode(),
+            domain=domain.encode(),
+            privkey=private_key.encode(),
+            include_headers=[
+                b"From", b"To", b"Subject", b"Date", b"Message-ID",
+                b"MIME-Version", b"Content-Type", b"List-Unsubscribe",
+            ],
+        )
+        return sig + raw
+
+    async def _send_via_smtp(
+        self,
+        to_email: str,
+        subject: str,
+        html_body: str,
+        from_name: str,
+        from_email: str,
+        tracking_token: str | None = None,
+    ) -> None:
+        message = self._build_message(
+            to_email, subject, html_body, from_name, from_email, tracking_token
+        )
+        dkim_cfg = self._dkim()
+        if dkim_cfg is not None:
+            signed = self._sign_dkim(message, *dkim_cfg)
+            client = await self._smtp_client()
+            # Send the exact signed bytes. The envelope sender is set to the
+            # From address so SPF (and DMARC alignment) is evaluated against
+            # the visible sender domain.
+            await client.sendmail(from_email, [to_email], signed)
+        else:
+            client = await self._smtp_client()
+            await client.send_message(message)
 
     # ── Public API used by dispatch_campaign ───────────────────────────────
+
+    async def send_direct(self, to_email: str, subject: str, html_body: str) -> None:
+        """Deliver an admin-authored (non-campaign) email, e.g. a remediation
+        notification. Records nothing itself — the caller owns the OutboxMessage."""
+        from_name, from_email = self._from()
+        if not self.simulate:
+            host, *_ = self._relay()
+            if not host:
+                logger.error(
+                    "Real delivery requested for a direct email but no SMTP relay is "
+                    "configured — falling back to simulated send for %s",
+                    to_email,
+                )
+            else:
+                try:
+                    await self._send_via_smtp(to_email, subject, html_body, from_name, from_email)
+                except Exception:
+                    logger.exception("SMTP delivery failed for %s", to_email)
 
     async def send(self, session, result: CampaignResult, employee: Employee, template: PhishingTemplate, org_id: str) -> bool:
         html_body = _inject_tracking(template.html_body, result.tracking_token)
@@ -170,7 +270,10 @@ class EmailProvider:
                 )
             else:
                 try:
-                    await self._send_via_smtp(employee.email, template.subject_line, html_body, from_name, from_email)
+                    await self._send_via_smtp(
+                        employee.email, template.subject_line, html_body,
+                        from_name, from_email, str(result.tracking_token),
+                    )
                 except Exception:
                     logger.exception("SMTP delivery failed for %s (result %s)", employee.email, result.id)
                     return False
@@ -232,6 +335,24 @@ async def dispatch_campaign(campaign_id: str, org_id: str) -> int:
         provider = EmailProvider(profile)
         recipients = 0
         last_by_domain: dict[str, float] = {}
+
+        # Employees with a completed remediation whose follow-up retest is now
+        # due. When this campaign delivers to them, that delivery IS the retest.
+        follow_up_by_employee: dict = {}
+        now = datetime.now(timezone.utc)
+        due_follow_ups = (
+            await session.execute(
+                select(Remediation).where(
+                    Remediation.status == RemediationStatus.COMPLETED,
+                    Remediation.follow_up_due_at.is_not(None),
+                    Remediation.follow_up_due_at <= now,
+                    Remediation.follow_up_campaign_id.is_(None),
+                )
+            )
+        ).scalars().all()
+        for follow_up in due_follow_ups:
+            follow_up_by_employee.setdefault(follow_up.employee_id, follow_up)
+
         try:
             for employee in employees:
                 if "All" not in dept_filter and employee.department not in dept_filter:
@@ -260,6 +381,10 @@ async def dispatch_campaign(campaign_id: str, org_id: str) -> int:
                             event_type=EventType.SENT,
                         )
                     )
+                    follow_up = follow_up_by_employee.get(employee.id)
+                    if follow_up is not None:
+                        follow_up.follow_up_campaign_id = campaign.id
+                        follow_up.follow_up_result_id = result.id
                 else:
                     await session.delete(result)
         finally:
@@ -275,12 +400,13 @@ async def dispatch_campaign(campaign_id: str, org_id: str) -> int:
 
 
 def _inject_tracking(html_body: str, tracking_token) -> str:
+    link_base = settings.TRACKING_LINK_BASE or settings.API_BASE_URL
     pixel = (
         f'<img src="{settings.API_BASE_URL}/track/open/{tracking_token}" '
         f'width="1" height="1" alt="" />'
     )
     body = html_body.replace(
-        "{{TRACKING_LINK}}", f"{settings.API_BASE_URL}/track/click/{tracking_token}"
+        "{{TRACKING_LINK}}", f"{link_base}/track/click/{tracking_token}"
     )
     return body + pixel
 
@@ -305,6 +431,7 @@ async def send_test_email(profile: SendingProfile, to_email: str) -> None:
             host, *_ = provider._relay()
             if not host:
                 raise ValueError("no SMTP relay configured")
-            await provider._send_via_smtp(to_email, TEST_SUBJECT, TEST_BODY, *provider._from())
+            from_name, from_email = provider._from()
+            await provider._send_via_smtp(to_email, TEST_SUBJECT, TEST_BODY, from_name, from_email)
     finally:
         await provider.close()

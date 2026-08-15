@@ -254,7 +254,7 @@ async def _seed():
             name="Acme Corp Pvt. Ltd.",
             domain="acme.local",
             slug="demo-org",
-            subscription_tier=SubscriptionTier.GROWTH,
+            subscription_tier=SubscriptionTier.FREE,
         )
         db.add(org)
         await db.flush()
@@ -262,6 +262,7 @@ async def _seed():
         admin = User(
             org_id=org.id,
             email="admin@demo.com",
+            first_name="Admin",
             hashed_password=hash_password("demo1234"),
             role="organization_admin",
         )

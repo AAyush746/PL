@@ -9,6 +9,7 @@ client (the simulated outbox). Two things are deliberate here:
    have entered your password?", and no payload is ever stored.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -20,8 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .core.config import get_settings
 from .database import get_tracking_db
 from .models import Campaign, CampaignResult, EventType, PhishingEvent
+from .remediation import assign_remediation, complete_remediation
 
 router = APIRouter(prefix="/track", tags=["tracking"])
+
+logger = logging.getLogger(__name__)
 
 TRACKING_PIXEL = (
     b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01"
@@ -94,6 +98,14 @@ async def track_click(token: str, request: Request, db: AsyncSession = Depends(g
             )
         await db.commit()
 
+        # Auto-enroll in remediation + email the training link with a deadline.
+        # Never allowed to break the redirect — assignment failures are logged.
+        if campaign:
+            try:
+                await assign_remediation(db, result, campaign)
+            except Exception:  # noqa: BLE001 — the click has already been recorded
+                logger.exception("Remediation assignment failed for result %s", result.id)
+
     # Always the educational reveal — explains what the red flags were.
     # There is intentionally no branch here that leads to a login form.
     return RedirectResponse(url=f"{settings.REVEAL_PAGE_URL}?t={token}&cid={result.campaign_id}")
@@ -118,6 +130,7 @@ async def track_training_complete(token: str, db: AsyncSession = Depends(get_tra
             )
         )
     await db.commit()
+    await complete_remediation(db, result)
     return {"ok": True, "training_completed": True}
 
 

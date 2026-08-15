@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   ShieldCheck,
   Loader2,
@@ -8,6 +8,7 @@ import {
   Building2,
   KeyRound,
   UserPlus,
+  Users,
   LogIn,
   Fingerprint,
   ScanFace,
@@ -16,6 +17,7 @@ import {
   CheckCircle2,
   Radar,
   ArrowRight,
+  ArrowLeft,
 } from 'lucide-react';
 import { login, register } from '../lib/api';
 import { useAuth } from '../App';
@@ -43,9 +45,9 @@ const FEATURES = [
 export default function Login() {
   const { login: setToken } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
   const [mode, setMode] = useState('login');
   const [orgName, setOrgName] = useState('Acme Corp Pvt. Ltd.');
+  const [employeeCount, setEmployeeCount] = useState('');
   const [email, setEmail] = useState('admin@demo.com');
   const [password, setPassword] = useState('demo1234');
   const [confirm, setConfirm] = useState('');
@@ -58,18 +60,35 @@ export default function Login() {
     return () => clearTimeout(t);
   }, []);
 
+  useEffect(() => {
+    setError('');
+    if (mode === 'register') {
+      setPassword('');
+      setConfirm('');
+    } else {
+      setOrgName('Acme Corp Pvt. Ltd.');
+      setEmail('admin@demo.com');
+      setPassword('demo1234');
+    }
+  }, [mode]);
+
   const submit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
+      const cleanOrg = orgName.trim();
+      const cleanEmail = email.trim().toLowerCase();
+      if (!cleanOrg || !cleanEmail) throw new Error('Organization name and email are required');
       if (mode === 'register') {
         if (password !== confirm) throw new Error('Passwords do not match');
-        await register({ org_name: orgName, email, password });
+        const employees = Number(employeeCount);
+        if (!employees || employees < 1) throw new Error('Please enter the number of employees');
+        await register({ org_name: cleanOrg, email: cleanEmail, password, employee_count: employees });
       }
-      const data = await login({ org_name: orgName, email, password });
+      const data = await login({ org_name: cleanOrg, email: cleanEmail, password });
       setToken(data.access_token);
-      navigate(location.state?.from || '/dashboard', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err.message || 'Authentication failed');
     } finally {
@@ -260,7 +279,21 @@ export default function Login() {
         <div className="panel-dark relative flex items-center justify-center bg-[#0e0e11] px-6 py-12 sm:px-10">
           <div className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-orange-500/10 blur-3xl anim-float lg:hidden" />
           <div className="w-full max-w-md anim-fade-up">
+            <div className="mb-6 hidden items-center justify-between lg:flex">
+              <Link
+                to="/"
+                className="inline-flex items-center gap-2 text-sm text-slate-400 transition hover:text-slate-200"
+              >
+                <ArrowLeft size={15} />
+                Back to home
+              </Link>
+            </div>
+
             <div className="mb-8 flex flex-col items-center text-center lg:hidden">
+              <Link to="/" className="mb-4 inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200">
+                <ArrowLeft size={13} />
+                Back to home
+              </Link>
               <Logo size="lg" />
               <h1 className="font-display text-3xl font-bold text-white">Phishloop</h1>
               <p className="mt-2 text-sm text-slate-400">
@@ -319,6 +352,20 @@ export default function Login() {
                     required
                   />
                 </Field>
+                {mode === 'register' && (
+                  <Field icon={Users} label="Number of employees">
+                    <input
+                      className="input"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={employeeCount}
+                      onChange={(e) => setEmployeeCount(e.target.value)}
+                      placeholder="e.g. 120"
+                      required
+                    />
+                  </Field>
+                )}
                 <Field icon={Mail} label="Email address">
                   <input
                     className="input"

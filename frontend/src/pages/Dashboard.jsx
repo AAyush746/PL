@@ -10,6 +10,10 @@ import {
   Activity,
   ArrowRight,
   Flag,
+  Lock,
+  BookOpen,
+  Clock,
+  PlayCircle,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -20,16 +24,17 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { getOrgSummary, getCampaigns, getEmployees, getDepartments } from '../lib/api';
+import { getOrgSummary, getCampaigns, getEmployees, getDepartments, getTrainingModules } from '../lib/api';
 import { useAuth } from '../App';
 import { useAsync, KpiCard, StatusBadge, ProgressBar, riskBg, cn } from '../components/ui';
 
 export default function Dashboard() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const summary = useAsync(() => getOrgSummary(token), [token]);
   const campaigns = useAsync(() => getCampaigns(token), [token]);
   const employees = useAsync(() => getEmployees(token), [token]);
   const depts = useAsync(() => getDepartments(token), [token]);
+  const training = useAsync(() => getTrainingModules(token), [token]);
 
   const trendData = useMemo(() => {
     const now = Date.now();
@@ -92,9 +97,13 @@ export default function Dashboard() {
   if (summary.loading || campaigns.loading) return <div className="py-24 text-center text-slate-600">Loading command center…</div>;
 
   const s = summary.data || {};
+  const isAdmin = user?.role === 'platform_admin';
+  const locked = (s.subscriptionTier || 'free') === 'free' && !isAdmin;
 
   return (
-    <div className="space-y-6">
+    <div className="relative">
+      <div className={locked ? 'pointer-events-none select-none blur-[6px]' : undefined}>
+      <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="anim-fade-up">
           <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-orange-600/90">
@@ -263,6 +272,57 @@ export default function Dashboard() {
         </section>
       </div>
 
+      <section className="glass-panel p-6 anim-fade-up-3">
+        <div className="mb-5 flex items-center justify-between">
+          <div>
+            <h2 className="section-title flex items-center gap-2">
+              <BookOpen className="text-orange-500" size={18} />
+              Security training library
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Topic-specific ~3-minute video micro-lessons (English & नेपाली) with study material — the same curriculum employees are auto-enrolled into after a click.
+            </p>
+          </div>
+          <Link to="/training" className="flex items-center gap-1 text-xs font-medium text-orange-600 hover:text-orange-500">
+            Full library <ArrowRight size={13} />
+          </Link>
+        </div>
+        {training.loading ? (
+          <p className="py-8 text-center text-sm text-slate-500">Loading lessons…</p>
+        ) : (training.data || []).length === 0 ? (
+          <p className="py-8 text-center text-sm text-slate-500">No lessons available yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {(training.data || []).slice(0, 4).map((m) => (
+              <div key={m.id} className="overflow-hidden rounded-xl border border-black/10 bg-black/[0.03]">
+                <div className="relative aspect-video bg-black">
+                  <video
+                    controls
+                    playsInline
+                    preload="metadata"
+                    className="h-full w-full"
+                    src={m.video_url_en}
+                  />
+                  <span className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[10px] font-medium text-white/90">
+                    <Clock size={11} /> {Math.max(5, Math.round((m.duration_seconds || 300) / 60))} min
+                  </span>
+                </div>
+                <div className="p-3.5">
+                  <h3 className="truncate text-sm font-semibold text-slate-900">{m.title}</h3>
+                  <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-500">{m.description}</p>
+                  <Link
+                    to="/training"
+                    className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-medium text-orange-600 hover:text-orange-500"
+                  >
+                    <PlayCircle size={13} /> Watch & study
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {vulnerable.length > 0 && (
         <section className="glass-panel overflow-hidden anim-fade-up-3">
           <div className="border-b border-black/10 px-6 py-4">
@@ -315,6 +375,27 @@ export default function Dashboard() {
             </table>
           </div>
         </section>
+      )}
+      </div>
+      </div>
+
+      {locked && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center p-6">
+          <div className="glass-panel max-w-md p-8 text-center anim-fade-up">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 shadow-lg shadow-orange-500/25">
+              <Lock size={28} className="text-white" />
+            </div>
+            <h2 className="font-display text-xl font-bold text-slate-900">This workspace is locked</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+              Your free plan keeps your dashboard hidden. Start a free 14-day trial to unlock the
+              command center, campaigns, and live human-risk analytics.
+            </p>
+            <Link to="/start-trial" className="btn-primary mt-6 w-full py-3">
+              Start free trial <ArrowRight size={16} />
+            </Link>
+            <p className="mt-3 text-xs text-slate-500">No credit card required.</p>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -1,13 +1,27 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+// Empty by default → relative URLs. The Vite dev/preview server proxies
+// `/api` (and `/media`) to the backend, so the browser only ever talks to the
+// forwarded frontend port — which works even when the backend's own port isn't
+// reachable from the developer's machine. Set VITE_API_BASE to an absolute URL
+// only when hosting the API on a different origin than the frontend.
+const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      ...options,
+    });
+  } catch (err) {
+    // Network-level failure (server down, wrong host, CORS block, offline).
+    const shownBase = API_BASE || (typeof window !== 'undefined' ? window.location.origin : '(relative)');
+    throw new Error(
+      `Cannot reach the API at ${shownBase} — is the backend running and reachable from this browser? (${err.message})`
+    );
+  }
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
@@ -40,6 +54,32 @@ export async function register(payload) {
   return request('/api/auth/register', { method: 'POST', body: JSON.stringify(payload) });
 }
 
+export async function registerAdmin(payload) {
+  return request('/api/auth/admin/register', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export async function getMe(token) {
+  const data = await request('/api/auth/me', { method: 'GET', token });
+  return {
+    email: data.email,
+    firstName: data.first_name,
+    role: data.role,
+    orgName: data.org_name,
+    orgSlug: data.org_slug,
+    subscriptionTier: data.subscription_tier,
+    trialEndsAt: data.trial_ends_at,
+    employeeCount: data.employee_count,
+  };
+}
+
+export async function initiateEsewa(token, plan) {
+  return request('/api/v1/org/pay/esewa/initiate', {
+    method: 'POST',
+    body: JSON.stringify({ plan }),
+    token,
+  });
+}
+
 // ── Org summary ────────────────────────────────────────────────────────────
 
 export async function getOrgSummary(token) {
@@ -53,6 +93,8 @@ export async function getOrgSummary(token) {
     clickRate: summary.click_rate,
     reportRate: summary.report_rate,
     trainingCompletionRate: summary.training_completion_rate,
+    subscriptionTier: summary.subscription_tier,
+    trialEndsAt: summary.trial_ends_at,
   };
 }
 
@@ -180,6 +222,30 @@ export async function testSendingProfile(token, id, toEmail) {
 
 export async function getEvents(token) {
   return request('/api/events', { method: 'GET', token });
+}
+
+// ── Remediation & follow-up queue ──────────────────────────────────────────
+
+export async function getRemediations(token) {
+  return request('/api/remediations', { method: 'GET', token });
+}
+
+export async function resendRemediation(token, id) {
+  return request(`/api/remediations/${id}/resend`, { method: 'POST', token });
+}
+
+// ── Training (lesson library) ───────────────────────────────────────────────
+
+export async function getTrainingModules(token) {
+  return request('/api/training/modules', { method: 'GET', token });
+}
+
+export async function getTrainingModule(token, id) {
+  return request(`/api/training/modules/${id}`, { method: 'GET', token });
+}
+
+export async function getTrainingCompliance(token) {
+  return request('/api/training/compliance', { method: 'GET', token });
 }
 
 // ── Training (public tracking endpoints) ───────────────────────────────────

@@ -140,10 +140,21 @@ export default function Employees() {
         <div className="glass-panel">
           <EmptyState
             icon={Users}
-            title="No employees found"
-            hint="Add people manually or import a CSV with headers first_name,last_name,email,department."
+            title={data && data.length === 0 ? 'No employees yet' : 'No employees match'}
+            hint={
+              data && data.length === 0
+                ? 'Your organization starts with an empty directory. Add people manually or import a CSV (headers: first_name,last_name,email,department) — they will appear in the list below.'
+                : 'No employees match the current search or department filter.'
+            }
             action={
-              <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add employee</button>
+              data && data.length === 0 ? (
+                <div className="flex gap-2">
+                  <button onClick={() => setImportOpen(true)} className="btn-ghost"><Upload size={15} /> Import CSV</button>
+                  <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add employee</button>
+                </div>
+              ) : (
+                <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add employee</button>
+              )
             }
           />
         </div>

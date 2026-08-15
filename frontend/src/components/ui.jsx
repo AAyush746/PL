@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Loader2 } from 'lucide-react';
 
 export function cn(...classes) {
@@ -204,12 +204,15 @@ export function useAsync(loader, deps) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [tick, setTick] = useState(0);
+  const loaderRef = useRef(loader);
+  loaderRef.current = loader;
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     setError('');
-    loader()
+    loaderRef.current()
       .then((result) => {
         if (alive) {
           setData(result);
@@ -226,7 +229,9 @@ export function useAsync(loader, deps) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, tick]);
 
-  return { data, loading, error };
+  const reload = useCallback(() => setTick((t) => t + 1), []);
+
+  return { data, loading, error, reload };
 }
